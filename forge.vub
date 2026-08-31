@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+"""
+forge.vub - a self-executing Vub build file.
+
+This file IS the interpreter (see spec section 1.2): the Vub engine is
+defined above, and the project's build configuration is embedded below
+as VUB_CONFIG. Run it directly:
+
+    chmod +x forge.vub
+    ./forge.vub build
+    ./forge.vub --list
+    ./forge.vub -test
+
+or via:  python3 forge.vub build
+"""
+
+"""
+vub.py - Interpreter for the Vub build orchestration language (spec v1.0)
+
+Vub is a small DSL for defining build targets and file operations in a
+single ``forge.vub`` file. This module implements the parser, the
+execution engine, and the command-line interface described in the
+Vub Language Specification.
+
+Usage:
+    python3 vub.py [target] [flags]              # uses ./forge.vub
+    python3 vub.py --file path/to/other.vub ...   # use a different file
+
+Flags (see spec section 3.2):
+    -test         Dry run: show what would happen without executing
+    -info         Verbose mode: show detailed execution information
+    -{target}     Chain an additional target to run after the main one
+    --list        List all available targets
+    --help        Show help information
+"""
+
+import os
+import re
+import sys
+import glob
+import shutil
+import subprocess
+from pathlib import Path
+
+
+# --------------------------------------------------------------------------
+# Exceptions / exit codes (spec section 9.4)
+# --------------------------------------------------------------------------
+
+EXIT_SUCCESS = 0
+EXIT_GENERAL_ERROR = 1
+EXIT_TARGET_NOT_FOUND = 2
+EXIT_COMMAND_FAILED = 3
+
+
+class VubError(Exception):
+    """Base error for problems the interpreter reports and exits on."""
+    def __init__(self, message, exit_code=EXIT_GENERAL_ERROR):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+class VubTargetNotFound(VubError):
+    def __init__(self, name, available):
+        msg = f"Error: Target '{name}' not found\nTry: ./forge.vub --list"
+        super().__init__(msg, EXIT_TARGET_NOT_FOUND)
+        self.name = name
+        self.available = available
+
+
+class VubCommandFailed(VubError):
+    def __init__(self, command, code):
+        msg = (
+            f"Error executing command: {command}\n"
+            f"Command failed with exit code: {code}"
+        )
+        super().__init__(msg, EXIT_COMMAND_FAILED)
+
+
+class VubSyntaxError(VubError):
+    def __init__(self, line_no, line, detail=""):
+        msg = f"Error: Syntax error on line {line_no}: {line.strip()!r}"
+        if detail:
+            msg += f"\n{detail}"
+        msg += '\nSyntax: define "name" execute = "command"'
+        super().__init__(msg, EXIT_GENERAL_ERROR)
+
+
+# --------------------------------------------------------------------------
+# Parsing
+# --------------------------------------------------------------------------
+
+# Matches a quoted string OR a bare (unquoted) word.
+_TOKEN_RE = re.compile(r'"([^"]*)"|(\S+)')
+
+
+def _strip_comment(line):
+    """Remove a ';' comment, but only when it's outside of quotes."""
+    in_quotes = False
+    for i, ch in enumerate(line):
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif ch == ';' and not in_quotes:
+            return line[:i]
+    return line
+
+
+def _tokenize(line):
+    """Split a line into tokens, keeping quoted strings as single tokens."""
+    tokens = []
+    for m in _TOKEN_RE.finditer(line):
+        quoted, bare = m.groups()
+        if quoted is not None:
+            tokens.append(quoted)
+        else:
+            tokens.append(bare)
+    return tokens
+
+
+class VubConfig:
+    """Parsed representation of a .vub configuration."""
+
+    def __init__(self):
+        self.targets = {}      # name -> command string
+        self.target_order = [] # preserves definition order (for --list)
+        self.build_dir = None
+        self.file_ops = []     # list of (op, args...) in file order
+
+
+def parse(text):
+    """Parse Vub source text (spec section 5) into a VubConfig."""
+    config = VubConfig()
+
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        line = _strip_comment(raw_line).strip()
+        if not line:
+            continue
+
+        tokens = _tokenize(line)
+        if not tokens:
+            continue
+
+        keyword = tokens[0]
+
+        if keyword == "define":
+            # define "target_name" execute = "command"
+            if len(tokens) < 5 or tokens[2] != "execute" or tokens[3] != "=":
+                raise VubSyntaxError(line_no, raw_line)
+            name, command = tokens[1], tokens[4]
+            if name not in config.targets:
+                config.target_order.append(name)
+            config.targets[name] = command
+
+        elif keyword == "makefile":
+            # makefile "directory_name"
+            if len(tokens) < 2:
+                raise VubSyntaxError(line_no, raw_line)
+            config.build_dir = tokens[1]
+
+        elif keyword == "copyfile":
+            if len(tokens) < 3:
+                raise VubSyntaxError(line_no, raw_line)
+            config.file_ops.append(("copy", tokens[1], tokens[2]))
+
+        elif keyword == "movefile":
+            if len(tokens) < 3:
+                raise VubSyntaxError(line_no, raw_line)
+            config.file_ops.append(("move", tokens[1], tokens[2]))
+
+        elif keyword == "deletefile":
+            if len(tokens) < 2:
+                raise VubSyntaxError(line_no, raw_line)
+            config.file_ops.append(("delete", tokens[1]))
+
+        else:
+            raise VubSyntaxError(
+                line_no, raw_line, detail=f"Unknown statement '{keyword}'"
+            )
+
+    return config
+
+
+# --------------------------------------------------------------------------
+# Execution engine
+# --------------------------------------------------------------------------
+
+class VubRunner:
+    def __init__(self, config: VubConfig, test_mode=False, info_mode=False):
+        self.config = config
+        self.test_mode = test_mode
+        self.info_mode = info_mode
+
+    # -- logging helpers ----------------------------------------------
+
+    def _info(self, msg):
+        if self.info_mode:
+            print(f"[INFO] {msg}")
+
+    def _announce(self, msg):
+        print(msg)
+
+    # -- file operations (spec 2.3) ------------------------------------
+
+    def run_file_ops(self):
+        for op in self.config.file_ops:
+            kind = op[0]
+            if kind == "copy":
+                self._copy(op[1], op[2])
+            elif kind == "move":
+                self._move(op[1], op[2])
+            elif kind == "delete":
+                self._delete(op[1])
+
+    def _expand(self, path):
+        """Expand a wildcard path into matches; non-wildcard paths pass through."""
+        if any(ch in path for ch in "*?[]"):
+            return sorted(glob.glob(path))
+        return [path]
+
+    def _copy(self, src, dst):
+        matches = self._expand(src)
+        if not matches:
+            print(f"Warning: no files matched for copy: {src}")
+            return
+        wildcard = any(ch in src for ch in "*?[]")
+        for m in matches:
+            if not os.path.exists(m):
+                print(f"Error copying file: {m} -> {dst}\nFile not found: {m}")
+                continue
+            if wildcard or dst.endswith("/") or os.path.isdir(dst):
+                target = os.path.join(dst, os.path.basename(m))
+            else:
+                target = dst
+            self._info(f"copyfile {m!r} -> {target!r}")
+            if self.test_mode:
+                self._announce(f"[TEST] Would copy: {m} -> {target}")
+                continue
+            os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+            try:
+                if os.path.isdir(m):
+                    shutil.copytree(m, target, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(m, target)
+                self._announce(f"Copied: {m} -> {target}")
+            except OSError as e:
+                print(f"Error copying file: {m} -> {target}\n{e}")
+
+    def _move(self, src, dst):
+        matches = self._expand(src)
+        if not matches:
+            print(f"Warning: no files matched for move: {src}")
+            return
+        wildcard = any(ch in src for ch in "*?[]")
+        for m in matches:
+            if not os.path.exists(m):
+                print(f"Error moving file: {m} -> {dst}\nFile not found: {m}")
+                continue
+            if wildcard or dst.endswith("/") or os.path.isdir(dst):
+                target = os.path.join(dst, os.path.basename(m))
+            else:
+                target = dst
+            self._info(f"movefile {m!r} -> {target!r}")
+            if self.test_mode:
+                self._announce(f"[TEST] Would move: {m} -> {target}")
+                continue
+            os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+            try:
+                shutil.move(m, target)
+                self._announce(f"Moved: {m} -> {target}")
+            except OSError as e:
+                print(f"Error moving file: {m} -> {target}\n{e}")
+
+    def _delete(self, path):
+        matches = self._expand(path)
+        if not matches:
+            print(f"Warning: no files matched for delete: {path}")
+            return
+        for m in matches:
+            if not os.path.exists(m):
+                print(f"Warning: file not found, skipping delete: {m}")
+                continue
+            self._info(f"deletefile {m!r}")
+            if self.test_mode:
+                self._announce(f"[TEST] Would delete: {m}")
+                continue
+            try:
+                if os.path.isdir(m):
+                    shutil.rmtree(m)
+                else:
+                    os.remove(m)
+                self._announce(f"Deleted: {m}")
+            except OSError as e:
+                print(f"Error deleting file: {m}\n{e}")
+
+    # -- build directory (spec 2.4) -------------------------------------
+
+    def make_build_dir(self):
+        if not self.config.build_dir:
+            return
+        self._info(f"makefile {self.config.build_dir!r}")
+        if self.test_mode:
+            self._announce(f"[TEST] Would create directory: {self.config.build_dir}")
+            return
+        os.makedirs(self.config.build_dir, exist_ok=True)
+        self._announce(f"Build directory ready: {self.config.build_dir}")
+
+    # -- targets (spec 2.2, 6.1) ------------------------------------------
+
+    def resolve_default_target(self):
+        """Follow a 'default' target definition to find the real target name."""
+        if "default" not in self.config.targets:
+            return None
+        value = self.config.targets["default"]
+        tokens = value.split()
+        if len(tokens) == 1 and tokens[0] in self.config.targets:
+            return tokens[0]
+        # 'default' points straight at a shell command / chain expression
+        return "default"
+
+    def run_target(self, name, _stack=None):
+        _stack = _stack or []
+        if name not in self.config.targets:
+            raise VubTargetNotFound(name, list(self.config.targets))
+        if name in _stack:
+            cycle = " -> ".join(_stack + [name])
+            raise VubError(f"Error: circular target dependency: {cycle}")
+
+        command = self.config.targets[name]
+        tokens = command.split()
+
+        # Target chaining (spec 6.1): if every token names another target,
+        # treat this as a dependency chain rather than a literal shell command.
+        if tokens and all(t in self.config.targets for t in tokens):
+            self._info(f"Target '{name}' chains to: {', '.join(tokens)}")
+            for t in tokens:
+                self.run_target(t, _stack + [name])
+            return
+
+        self._run_shell(name, command)
+
+    def _run_shell(self, target_name, command):
+        self._info(f"Executing target '{target_name}': {command}")
+        if self.test_mode:
+            self._announce(f"[TEST] Would execute: {command}")
+            return
+        self._announce(f"Running target '{target_name}': {command}")
+        result = subprocess.run(command, shell=True)
+        if result.returncode != 0:
+            raise VubCommandFailed(command, result.returncode)
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+HELP_TEXT = """\
+Vub - lightweight build orchestration language (spec v1.0)
+
+Usage:
+  ./forge.vub [target] [flags]
+
+Flags:
+  -test         Test/dry run mode - shows what would happen without executing
+  -info         Info/verbose mode - displays detailed execution information
+  -{target}     Chain an additional target to run after the main target
+  --list        List all available targets
+  --help        Display this help information
+"""
+
+
+def _print_list(config: VubConfig):
+    if not config.target_order:
+        print("No targets defined.")
+        return
+    print("Available targets:")
+    for name in config.target_order:
+        print(f"  {name:<15} execute = \"{config.targets[name]}\"")
+
+
+def _load_config(path):
+    if not os.path.exists(path):
+        raise VubError(f"Error: Vub file not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    return parse(text)
+
+
+def main(argv=None, vub_source=None):
+    """Entry point. If vub_source is given, use it instead of reading a file
+    (used by self-contained forge.vub files that embed their own config)."""
+    argv = sys.argv[1:] if argv is None else argv
+
+    # --help / --list can appear anywhere among the args.
+    if "--help" in argv:
+        print(HELP_TEXT)
+        return EXIT_SUCCESS
+
+    file_path = "forge.vub"
+    remaining = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--file" and i + 1 < len(argv):
+            file_path = argv[i + 1]
+            i += 2
+            continue
+        remaining.append(argv[i])
+        i += 1
+    argv = remaining
+
+    try:
+        config = vub_source if vub_source is not None else _load_config(file_path)
+    except VubError as e:
+        print(e)
+        return e.exit_code
+
+    if "--list" in argv:
+        _print_list(config)
+        return EXIT_SUCCESS
+
+    test_mode = False
+    info_mode = False
+    main_target = None
+    chain_targets = []
+
+    for arg in argv:
+        if arg in ("-test", "--test"):
+            test_mode = True
+        elif arg in ("-info", "--info"):
+            info_mode = True
+        elif arg.startswith("--"):
+            print(f"Error: unknown flag '{arg}'")
+            return EXIT_GENERAL_ERROR
+        elif arg.startswith("-"):
+            chain_targets.append(arg[1:])
+        else:
+            if main_target is None:
+                main_target = arg
+            else:
+                print(f"Error: unexpected extra argument '{arg}'")
+                return EXIT_GENERAL_ERROR
+
+    runner = VubRunner(config, test_mode=test_mode, info_mode=info_mode)
+
+    if main_target is None:
+        main_target = runner.resolve_default_target()
+        if main_target is None:
+            print("Error: no target specified and no 'default' target defined")
+            print(HELP_TEXT)
+            return EXIT_GENERAL_ERROR
+
+    try:
+        runner.run_file_ops()
+        runner.make_build_dir()
+        runner.run_target(main_target)
+        for t in chain_targets:
+            runner.run_target(t)
+    except VubError as e:
+        print(e)
+        return e.exit_code
+
+    print("Build finished successfully.")
+    return EXIT_SUCCESS
+
+# --------------------------------------------------------------------------
+# Embedded Vub configuration (spec section 7.3 example project)
+# --------------------------------------------------------------------------
+
+VUB_CONFIG = r'''
+; Project: MyApp - C++ Application
+; This config lives inside this same file, right below the interpreter code.
+; Vub is self-contained: one file holds both the engine and the build config.
+
+makefile "build"
+
+define "build" execute = "g++ -std=c++17 -O2 src/*.cpp -o myapp"
+define "debug" execute = "g++ -std=c++17 -g -O0 src/*.cpp -o myapp"
+define "clean" execute = "rm -rf build/ *.o myapp *.log"
+define "test" execute = "ctest --output-on-failure"
+define "run" execute = "./myapp"
+define "docs" execute = "doxygen Doxyfile"
+
+copyfile "config/default.json" "build/config.json"
+copyfile "assets/*" "build/assets/"
+
+define "all" execute = "build test docs"
+define "deploy" execute = "build test run"
+
+define "default" execute = "build"
+'''
+
+
+if __name__ == "__main__":
+    sys.exit(main(vub_source=parse(VUB_CONFIG)))
