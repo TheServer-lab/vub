@@ -3,8 +3,9 @@
 ;
 ; Builds VubSetup.exe, which installs vub.exe (the Vub interpreter, built
 ; with PyInstaller) into Program Files, registers it on the system PATH,
-; creates Start Menu shortcuts, and adds an Add/Remove Programs entry with
-; a proper uninstaller.
+; optionally associates .vub files with Python so double-clicking forge.vub
+; opens the interactive "vub>" shell, creates Start Menu shortcuts, and adds
+; an Add/Remove Programs entry with a proper uninstaller.
 ;
 ; Build with:  makensis installer.nsi
 ; ============================================================================
@@ -16,6 +17,7 @@
 !define PRODUCT_EXE       "vub.exe"
 !define UNINST_KEY        "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 !define ENV_KEY           'HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"'
+!define VUB_FILE_PROGID   "VubFile"
 
 SetCompressor /SOLID lzma
 
@@ -39,8 +41,8 @@ ${StrRep}
 ${UnStrRep}
 
 !define MUI_ABORTWARNING
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+!define MUI_ICON "vub.ico"
+!define MUI_UNICON "vub.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "LICENSE.txt"
@@ -78,6 +80,8 @@ Section "Vub CLI (required)" SEC_MAIN
   File "${PRODUCT_EXE}"
   File "README.md"
   File "LICENSE.txt"
+  File "vub.ico"
+  File "forge.vub"
 
   WriteRegStr HKLM "Software\${PRODUCT_NAME}" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
@@ -95,8 +99,8 @@ Section "Vub CLI (required)" SEC_MAIN
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}\Vub Command Prompt.lnk" \
     "$SYSDIR\cmd.exe" '/k "cd /d $INSTDIR"' "$INSTDIR\${PRODUCT_EXE}"
-  CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}\Vub README.lnk" "$INSTDIR\README.md"
-  CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}\Uninstall ${PRODUCT_NAME}.lnk" "$INSTDIR\Uninstall.exe"
+  CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}\Vub README.lnk" "$INSTDIR\README.md" "" "$INSTDIR\vub.ico"
+  CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}\Uninstall ${PRODUCT_NAME}.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\vub.ico"
 SectionEnd
 
 ; ----------------------------------------------------------------------------
@@ -117,9 +121,43 @@ Section "Add to system PATH" SEC_PATH
   ${EndIf}
 SectionEnd
 
+; ----------------------------------------------------------------------------
+; Optional: register .vub files so that double-clicking forge.vub opens a
+; terminal with the interactive "vub>" shell (via Python, if present).
+; ----------------------------------------------------------------------------
+Section "Associate .vub files" SEC_ASSOC
+  ; Locate python.exe: App Paths key, then PythonCore InstallPath (per-user or per-machine).
+  ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\App Paths\python.exe" ""
+  ${If} $0 == ""
+    ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\App Paths\python.exe" ""
+  ${EndIf}
+  ${If} $0 == ""
+    ReadRegStr $1 HKCU "Software\Python\PythonCore\CurrentVersion" ""
+    ${If} $1 == ""
+      ReadRegStr $1 HKLM "Software\Python\PythonCore\CurrentVersion" ""
+    ${EndIf}
+    ${If} $1 != ""
+      ReadRegStr $0 HKCU "Software\Python\PythonCore\$1\InstallPath" ""
+      ${If} $0 == ""
+        ReadRegStr $0 HKLM "Software\Python\PythonCore\$1\InstallPath" ""
+      ${EndIf}
+      ${If} $0 != ""
+        StrCpy $0 "$0python.exe"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  ${If} $0 == ""
+    MessageBox MB_ICONINFORMATION|MB_OK "Python was not found. .vub files will not be associated, so double-clicking a .vub file won't open the vub> shell. Install Python 3 and re-run this installer to enable it."
+  ${Else}
+    WriteRegStr HKCU "Software\Classes\.vub" "" "${VUB_FILE_PROGID}"
+    WriteRegStr HKCU "Software\Classes\${VUB_FILE_PROGID}\shell\open\command" "" '"$0" "%1" %*'
+  ${EndIf}
+SectionEnd
+
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_MAIN} "The vub.exe interpreter, README, and license. Required."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_PATH} "Lets you run 'vub' from any Command Prompt or PowerShell window without typing the full path."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_ASSOC} "Associates .vub files with Python so double-clicking forge.vub opens the interactive 'vub>' shell."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; ----------------------------------------------------------------------------
@@ -129,6 +167,8 @@ Section "Uninstall"
   Delete "$INSTDIR\${PRODUCT_EXE}"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\LICENSE.txt"
+  Delete "$INSTDIR\vub.ico"
+  Delete "$INSTDIR\forge.vub"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
 
@@ -136,6 +176,10 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\${PRODUCT_NAME}\Vub README.lnk"
   Delete "$SMPROGRAMS\${PRODUCT_NAME}\Uninstall ${PRODUCT_NAME}.lnk"
   RMDir "$SMPROGRAMS\${PRODUCT_NAME}"
+
+  ; Remove the .vub file association, if present
+  DeleteRegKey HKCU "Software\Classes\${VUB_FILE_PROGID}"
+  DeleteRegKey HKCU "Software\Classes\.vub"
 
   DeleteRegKey HKLM "${UNINST_KEY}"
   DeleteRegKey HKLM "Software\${PRODUCT_NAME}"

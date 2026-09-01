@@ -1,0 +1,52 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="flame" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FBBF6B"/>
+      <stop offset="45%" stop-color="#F0812F"/>
+      <stop offset="100%" stop-color="#C5471E"/>
+    </linearGradient>
+    <linearGradient id="hexShade" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2A2F36"/>
+      <stop offset="100%" stop-color="#181B20"/>
+    </linearGradient>
+  </defs>
+
+  <!-- outer badge: forge socket / bolt-head silhouette -->
+  <polygon points="256.00,36.00 446.53,146.00 446.53,366.00 256.00,476.00 65.47,366.00 65.47,146.00" fill="url(#hexShade)" stroke="#4C6B8A" stroke-width="6"/>
+
+  <!-- machined inner ring -->
+  <polygon points="256.00,58.00 427.47,157.00 427.47,355.00 256.00,454.00 84.53,355.00 84.53,157.00" fill="none" stroke="#39424D" stroke-width="3"/>
+
+  <!-- forge flame, leaning slightly right for motion -->
+  <path d="
+    M 256 140
+    C 292 176, 300 212, 278 240
+    C 302 228, 316 250, 310 276
+    C 340 250, 342 300, 312 330
+    C 336 322, 340 356, 312 380
+    C 284 400, 228 400, 200 380
+    C 168 356, 166 316, 190 288
+    C 176 292, 168 270, 182 250
+    C 172 244, 176 218, 198 206
+    C 190 226, 202 234, 214 226
+    C 206 200, 218 168, 256 140
+    Z"
+    fill="url(#flame)"/>
+
+  <!-- ember core highlight -->
+  <path d="
+    M 252 268
+    C 268 282, 272 302, 258 318
+    C 246 330, 226 328, 220 312
+    C 216 300, 222 288, 234 284
+    C 228 292, 232 302, 242 302
+    C 252 302, 256 292, 250 282
+    C 246 276, 246 272, 252 268
+    Z"
+    fill="#FFE1A8"/>
+
+  <!-- three corner rivets, machined-part detail -->
+  <circle cx="256" cy="82" r="9" fill="#4C6B8A"/>
+  <circle cx="392" cy="166" r="9" fill="#4C6B8A"/>
+  <circle cx="120" cy="166" r="9" fill="#4C6B8A"/>
+</svg>

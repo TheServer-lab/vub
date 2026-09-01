@@ -40,6 +40,7 @@ import sys
 import glob
 import shutil
 import subprocess
+import datetime
 from pathlib import Path
 
 
@@ -51,6 +52,9 @@ EXIT_SUCCESS = 0
 EXIT_GENERAL_ERROR = 1
 EXIT_TARGET_NOT_FOUND = 2
 EXIT_COMMAND_FAILED = 3
+
+VUB_VERSION = "1.0"
+VUB_ABOUT = "Made by Sourasish Das"
 
 
 class VubError(Exception):
@@ -364,7 +368,11 @@ Flags:
   -info         Info/verbose mode - displays detailed execution information
   -{target}     Chain an additional target to run after the main target
   --list        List all available targets
+  --version     Display version and build date
   --help        Display this help information
+
+Commands:
+  about         Show information about Vub
 """
 
 
@@ -390,9 +398,18 @@ def main(argv=None, vub_source=None):
     (used by self-contained forge.vub files that embed their own config)."""
     argv = sys.argv[1:] if argv is None else argv
 
-    # --help / --list can appear anywhere among the args.
+    # --help / --list / --version can appear anywhere among the args.
     if "--help" in argv:
         print(HELP_TEXT)
+        return EXIT_SUCCESS
+
+    if "--version" in argv:
+        compile_date = datetime.datetime.now().strftime("%d/%m/%Y")
+        print(f"{VUB_VERSION} Compiled on {compile_date}")
+        return EXIT_SUCCESS
+
+    if "about" in argv:
+        print(VUB_ABOUT)
         return EXIT_SUCCESS
 
     file_path = "forge.vub"
@@ -461,6 +478,44 @@ def main(argv=None, vub_source=None):
     print("Build finished successfully.")
     return EXIT_SUCCESS
 
+
+def _run_repl(vub_source):
+    """Interactive Vub shell: prints a 'vub>' prompt so you can type a target
+    name (e.g. 'build') and run it. 'exit' or Ctrl+C leaves the shell."""
+    import builtins
+    config = vub_source if vub_source is not None else _load_config("forge.vub")
+    runner = VubRunner(config, test_mode=False, info_mode=False)
+    print("Vub interactive shell. Type a target (e.g. 'build'), '--list', 'about', '--version', or 'exit'.")
+    while True:
+        try:
+            line = builtins.input("vub> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not line:
+            continue
+        if line in ("exit", "quit"):
+            break
+        cmds = line.split()
+        if cmds[0] in ("--help", "-h", "help"):
+            print(HELP_TEXT)
+            continue
+        if cmds[0] in ("--version", "-v"):
+            compile_date = datetime.datetime.now().strftime("%d/%m/%Y")
+            print(f"{VUB_VERSION} Compiled on {compile_date}")
+            continue
+        if cmds[0] in ("--list", "-l"):
+            _print_list(config)
+            continue
+        if cmds[0] == "about":
+            print(VUB_ABOUT)
+            continue
+        try:
+            runner.run_target(line)
+        except VubError as e:
+            print(e)
+
+
 # --------------------------------------------------------------------------
 # Embedded Vub configuration (spec section 7.3 example project)
 # --------------------------------------------------------------------------
@@ -490,4 +545,9 @@ define "default" execute = "build"
 
 
 if __name__ == "__main__":
-    sys.exit(main(vub_source=parse(VUB_CONFIG)))
+    config = parse(VUB_CONFIG)
+    argv = sys.argv[1:]
+    if not argv:
+        _run_repl(config)
+        sys.exit(EXIT_SUCCESS)
+    sys.exit(main(argv, config))

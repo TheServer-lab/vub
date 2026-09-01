@@ -25,6 +25,7 @@ import sys
 import glob
 import shutil
 import subprocess
+import datetime
 from pathlib import Path
 
 
@@ -36,6 +37,9 @@ EXIT_SUCCESS = 0
 EXIT_GENERAL_ERROR = 1
 EXIT_TARGET_NOT_FOUND = 2
 EXIT_COMMAND_FAILED = 3
+
+VUB_VERSION = "1.0"
+VUB_ABOUT = "Made by Sourasish Das"
 
 
 class VubError(Exception):
@@ -349,7 +353,11 @@ Flags:
   -info         Info/verbose mode - displays detailed execution information
   -{target}     Chain an additional target to run after the main target
   --list        List all available targets
+  --version     Display version and build date
   --help        Display this help information
+
+Commands:
+  about         Show information about Vub
 """
 
 
@@ -375,9 +383,18 @@ def main(argv=None, vub_source=None):
     (used by self-contained forge.vub files that embed their own config)."""
     argv = sys.argv[1:] if argv is None else argv
 
-    # --help / --list can appear anywhere among the args.
+    # --help / --list / --version can appear anywhere among the args.
     if "--help" in argv:
         print(HELP_TEXT)
+        return EXIT_SUCCESS
+
+    if "--version" in argv:
+        compile_date = datetime.datetime.now().strftime("%d/%m/%Y")
+        print(f"{VUB_VERSION} Compiled on {compile_date}")
+        return EXIT_SUCCESS
+
+    if "about" in argv:
+        print(VUB_ABOUT)
         return EXIT_SUCCESS
 
     file_path = "forge.vub"

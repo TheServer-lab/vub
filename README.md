@@ -1,5 +1,7 @@
 # Vub
 
+![Vub](vub_wordmark.png)
+
 Vub is a lightweight build-orchestration language: a single `forge.vub`
 config file that defines build targets and file operations, run with a
 small self-contained interpreter. See `Vub_Language_Specification_1.0.md`
@@ -19,6 +21,9 @@ installer for it.
 | `vub.py` | The interpreter's Python source. This is what `vub.exe` is compiled from. |
 | `forge.vub` | An example, self-contained Vub build file (interpreter + config in one file) for a C++ project. |
 | `LICENSE.txt` | License shown in the installer's license page. |
+| `vub.ico` | The application icon (embedded in `vub.exe`, used by the installer and Start Menu shortcuts). |
+| `vub_mark.svg` | Source vector for the icon mark — a forge flame on a hex-bolt badge, referencing `forge.vub` and the tool's build/mechanical domain. |
+| `vub_wordmark.png` | Icon + logotype lockup, for docs, READMEs, or a project site. |
 
 ## Installing
 
@@ -27,9 +32,13 @@ Run `VubSetup.exe` and follow the prompts. It will:
 1. Install `vub.exe` to `C:\Program Files\Vub` (customizable during setup).
 2. Optionally add that folder to your system `PATH` (on by default), so
    you can run `vub` from any Command Prompt or PowerShell window.
-3. Create Start Menu shortcuts: a "Vub Command Prompt" opened in the
+3. Optionally associate `.vub` files with Python (on by default), so
+   double-clicking `forge.vub` opens a terminal with the interactive
+   `vub>` shell. This requires Python to be installed; if it isn't found,
+   the installer skips the association with a notice.
+4. Create Start Menu shortcuts: a "Vub Command Prompt" opened in the
    install directory, a link to this README, and an uninstaller.
-4. Register an Add/Remove Programs entry so it can be cleanly removed
+5. Register an Add/Remove Programs entry so it can be cleanly removed
    from *Settings → Apps*.
 
 **Silent install** (for scripted/unattended setups):
@@ -54,6 +63,8 @@ PowerShell window in your project folder and run:
 
 ```bat
 vub --list          REM show all targets defined in forge.vub
+vub --version       REM show version (1.0) and compile date
+vub about           REM show info (made by Sourasish Das)
 vub build            REM run the "build" target
 vub build -test       REM dry run: show what would happen without doing it
 vub build -info       REM verbose: show detailed execution info
@@ -63,6 +74,11 @@ vub --help
 
 If no target is given, `vub` runs whatever target `define "default"
 execute = "..."` points to in your `forge.vub`.
+
+**Interactive shell:** double-clicking `forge.vub` (or running it with no
+arguments) opens an interactive `vub>` prompt where you can type a target
+name — e.g. `build` — and run it, plus `--list`, `about`, `--version`,
+`--help`, or `exit` to leave.
 
 Write your own `forge.vub` in a project directory using the syntax
 described in `Vub_Language_Specification_1.0.md`, for example:
@@ -90,6 +106,16 @@ copyfile "config/default.json" "build/config.json"
 > Git Bash, WSL, or Windows equivalents like `del`/`rmdir`). Vub itself
 > doesn't translate commands between platforms — write `forge.vub`
 > commands for whatever shell/toolchain your project actually uses.
+
+## Branding
+
+The mark is a stylized forge flame set inside a hex-bolt badge — a nod to
+`forge.vub` and to Vub's build/tooling domain, rather than a generic
+letterform. Palette: charcoal `#181B20`/`#2A2F36` badge, steel-blue
+`#4C6B8A` ring and rivets, ember gradient `#FBBF6B → #F0812F → #C5471E`
+flame. `vub.ico` is embedded directly into `vub.exe` and used throughout
+the installer and Start Menu shortcuts; `vub_mark.svg` is the editable
+source if you want to re-export at other sizes or recolor it.
 
 ## How this was built
 
