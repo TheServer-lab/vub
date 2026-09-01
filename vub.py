@@ -354,6 +354,7 @@ Flags:
   -{target}     Chain an additional target to run after the main target
   --list        List all available targets
   --version     Display version and build date
+  --shell       Start an interactive 'vub>' shell (REPL)
   --help        Display this help information
 
 Commands:
@@ -376,6 +377,41 @@ def _load_config(path):
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     return parse(text)
+
+
+def _run_repl(config: VubConfig):
+    """Interactive Vub shell: prints a 'vub>' prompt so you can type a target
+    name (e.g. 'build') and run it. 'exit' leaves the shell."""
+    runner = VubRunner(config, test_mode=False, info_mode=False)
+    print("Vub interactive shell. Type a target (e.g. 'build'), '--list', 'about', '--version', or 'exit'.")
+    while True:
+        try:
+            line = input("vub> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not line:
+            continue
+        if line in ("exit", "quit"):
+            break
+        cmds = line.split()
+        if cmds[0] in ("--help", "-h", "help"):
+            print(HELP_TEXT)
+            continue
+        if cmds[0] in ("--version", "-v"):
+            compile_date = datetime.datetime.now().strftime("%d/%m/%Y")
+            print(f"{VUB_VERSION} Compiled on {compile_date}")
+            continue
+        if cmds[0] in ("--list", "-l"):
+            _print_list(config)
+            continue
+        if cmds[0] == "about":
+            print(VUB_ABOUT)
+            continue
+        try:
+            runner.run_target(line)
+        except VubError as e:
+            print(e)
 
 
 def main(argv=None, vub_source=None):
@@ -410,13 +446,21 @@ def main(argv=None, vub_source=None):
     argv = remaining
 
     try:
-        config = vub_source if vub_source is not None else _load_config(file_path)
+        if vub_source is not None:
+            config = vub_source
+        else:
+            config = _load_config(file_path)
+            os.chdir(Path(file_path).resolve().parent)
     except VubError as e:
         print(e)
         return e.exit_code
 
     if "--list" in argv:
         _print_list(config)
+        return EXIT_SUCCESS
+
+    if "--shell" in argv or "--repl" in argv:
+        _run_repl(config)
         return EXIT_SUCCESS
 
     test_mode = False

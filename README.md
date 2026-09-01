@@ -32,10 +32,9 @@ Run `VubSetup.exe` and follow the prompts. It will:
 1. Install `vub.exe` to `C:\Program Files\Vub` (customizable during setup).
 2. Optionally add that folder to your system `PATH` (on by default), so
    you can run `vub` from any Command Prompt or PowerShell window.
-3. Optionally associate `.vub` files with Python (on by default), so
+3. Optionally associate `.vub` files with `vub.exe` (on by default), so
    double-clicking `forge.vub` opens a terminal with the interactive
-   `vub>` shell. This requires Python to be installed; if it isn't found,
-   the installer skips the association with a notice.
+   `vub>` shell in that file's folder. No Python needed.
 4. Create Start Menu shortcuts: a "Vub Command Prompt" opened in the
    install directory, a link to this README, and an uninstaller.
 5. Register an Add/Remove Programs entry so it can be cleanly removed

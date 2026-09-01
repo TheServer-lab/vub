@@ -369,6 +369,7 @@ Flags:
   -{target}     Chain an additional target to run after the main target
   --list        List all available targets
   --version     Display version and build date
+  --shell       Start an interactive 'vub>' shell (REPL)
   --help        Display this help information
 
 Commands:
@@ -425,13 +426,21 @@ def main(argv=None, vub_source=None):
     argv = remaining
 
     try:
-        config = vub_source if vub_source is not None else _load_config(file_path)
+        if vub_source is not None:
+            config = vub_source
+        else:
+            config = _load_config(file_path)
+            os.chdir(Path(file_path).resolve().parent)
     except VubError as e:
         print(e)
         return e.exit_code
 
     if "--list" in argv:
         _print_list(config)
+        return EXIT_SUCCESS
+
+    if "--shell" in argv or "--repl" in argv:
+        _run_repl(config)
         return EXIT_SUCCESS
 
     test_mode = False

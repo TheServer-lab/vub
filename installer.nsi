@@ -3,7 +3,7 @@
 ;
 ; Builds VubSetup.exe, which installs vub.exe (the Vub interpreter, built
 ; with PyInstaller) into Program Files, registers it on the system PATH,
-; optionally associates .vub files with Python so double-clicking forge.vub
+; optionally associates .vub files with vub.exe so double-clicking forge.vub
 ; opens the interactive "vub>" shell, creates Start Menu shortcuts, and adds
 ; an Add/Remove Programs entry with a proper uninstaller.
 ;
@@ -122,42 +122,18 @@ Section "Add to system PATH" SEC_PATH
 SectionEnd
 
 ; ----------------------------------------------------------------------------
-; Optional: register .vub files so that double-clicking forge.vub opens a
-; terminal with the interactive "vub>" shell (via Python, if present).
+; Optional: register .vub files so that double-clicking forge.vub opens the
+; interactive "vub>" shell in that file's folder.
 ; ----------------------------------------------------------------------------
 Section "Associate .vub files" SEC_ASSOC
-  ; Locate python.exe: App Paths key, then PythonCore InstallPath (per-user or per-machine).
-  ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\App Paths\python.exe" ""
-  ${If} $0 == ""
-    ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\App Paths\python.exe" ""
-  ${EndIf}
-  ${If} $0 == ""
-    ReadRegStr $1 HKCU "Software\Python\PythonCore\CurrentVersion" ""
-    ${If} $1 == ""
-      ReadRegStr $1 HKLM "Software\Python\PythonCore\CurrentVersion" ""
-    ${EndIf}
-    ${If} $1 != ""
-      ReadRegStr $0 HKCU "Software\Python\PythonCore\$1\InstallPath" ""
-      ${If} $0 == ""
-        ReadRegStr $0 HKLM "Software\Python\PythonCore\$1\InstallPath" ""
-      ${EndIf}
-      ${If} $0 != ""
-        StrCpy $0 "$0python.exe"
-      ${EndIf}
-    ${EndIf}
-  ${EndIf}
-  ${If} $0 == ""
-    MessageBox MB_ICONINFORMATION|MB_OK "Python was not found. .vub files will not be associated, so double-clicking a .vub file won't open the vub> shell. Install Python 3 and re-run this installer to enable it."
-  ${Else}
-    WriteRegStr HKCU "Software\Classes\.vub" "" "${VUB_FILE_PROGID}"
-    WriteRegStr HKCU "Software\Classes\${VUB_FILE_PROGID}\shell\open\command" "" '"$0" "%1" %*'
-  ${EndIf}
+  WriteRegStr HKCU "Software\Classes\.vub" "" "${VUB_FILE_PROGID}"
+  WriteRegStr HKCU "Software\Classes\${VUB_FILE_PROGID}\shell\open\command" "" '"$INSTDIR\${PRODUCT_EXE}" --shell --file "%1"'
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_MAIN} "The vub.exe interpreter, README, and license. Required."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_PATH} "Lets you run 'vub' from any Command Prompt or PowerShell window without typing the full path."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_ASSOC} "Associates .vub files with Python so double-clicking forge.vub opens the interactive 'vub>' shell."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_ASSOC} "Associates .vub files with vub.exe so double-clicking forge.vub opens the interactive 'vub>' shell in that file's folder."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; ----------------------------------------------------------------------------
